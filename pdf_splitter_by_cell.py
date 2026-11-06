@@ -75,12 +75,15 @@ def read_output_names(
             raise ValueError(f'指定したシート「{sheet_name}」がExcelブックにありません。')
 
         # PDFの各ページに対応するセルを、開始行から1行ずつ下へ読みます。
+        # セルの数式有無を調べる表と、値を読む表をそれぞれ選びます。
         formula_sheet = formula_workbook[sheet_name]
         value_sheet = value_workbook[sheet_name]
         names: list[str] = []
         for offset in range(page_count):
+            # 1ページ目は開始行、2ページ目はその次の行、という対応です。
             row = first_row + offset
             address = f"{column}{row}"
+            # 数式セルの場合も、ここではExcelが保存した計算結果を名前に使います。
             formula_cell = formula_sheet[address]
             value_cell = value_sheet[address]
             value = value_cell.value
@@ -99,6 +102,7 @@ def read_output_names(
             names.append(f"{name}.pdf")
 
         # Windowsでは大文字と小文字だけが違う名前も同じファイルとみなされます。
+        # 名前が重複するとページが上書きされるため、先に一覧を確認します。
         seen: set[str] = set()
         duplicates: list[str] = []
         for filename in names:
@@ -128,6 +132,7 @@ def split_pdf_by_cell(
     sheet_name: str,
     start_cell: str,
 ) -> list[Path]:
+    # ファイルが存在するか、選んだ拡張子が対応しているかを確認します。
     if not pdf_path.is_file():
         raise ValueError("指定したPDFファイルが見つかりません。")
     if not excel_path.is_file():
@@ -142,6 +147,7 @@ def split_pdf_by_cell(
     # 先にPDFを開き、ページ数を調べます。1ページにつき1つの出力を作ります。
     try:
         reader = PdfReader(str(pdf_path), strict=True)
+        # 空のパスワードで開けない暗号化PDFは、このツールでは処理しません。
         if reader.is_encrypted:
             try:
                 unlocked = reader.decrypt("")
@@ -209,6 +215,7 @@ class PdfSplitByCellApp:
         self.sheet_var = tk.StringVar()
         self.cell_var = tk.StringVar(value="A1")
 
+        # gridは画面上の部品を行と列に並べるTkinterの配置方法です。
         frame = tk.Frame(root, padx=16, pady=16)
         frame.grid(sticky="nsew")
         self._file_row(frame, 0, "分割するPDF", self.pdf_var, self.choose_pdf)
@@ -226,6 +233,7 @@ class PdfSplitByCellApp:
         ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 12))
         tk.Button(frame, text="分割を実行", width=18, command=self.run).grid(row=6, column=0, columnspan=3)
 
+    # PDF/Excel/出力先の入力欄を共通の見た目で作る補助メソッドです。
     @staticmethod
     def _file_row(frame: tk.Frame, row: int, label: str, variable: tk.StringVar, command) -> None:
         tk.Label(frame, text=label, width=20, anchor="w").grid(row=row, column=0, sticky="w", pady=5)
@@ -233,6 +241,7 @@ class PdfSplitByCellApp:
         tk.Button(frame, text="参照...", command=command).grid(row=row, column=2, pady=5)
 
     def choose_pdf(self) -> None:
+        # ファイル選択ダイアログを開き、選んだ場所を入力欄に入れます。
         path = filedialog.askopenfilename(title="分割するPDFを選択", filetypes=[("PDF", "*.pdf")])
         if path:
             self.pdf_var.set(path)
@@ -240,6 +249,7 @@ class PdfSplitByCellApp:
                 self.output_var.set(str(Path(path).parent))
 
     def choose_excel(self) -> None:
+        # Excel内のシート名も読み込み、画面の選択リストを更新します。
         # Excelを選ぶと、シート名を読み込んで選択欄に表示します。
         path = filedialog.askopenfilename(title="Excelファイルを選択", filetypes=[("Excelブック", "*.xlsx *.xlsm")])
         if not path:
@@ -262,6 +272,7 @@ class PdfSplitByCellApp:
         self.sheet_var.set(active_sheet if active_sheet in sheet_names else sheet_names[0])
 
     def choose_output(self) -> None:
+        # 保存先にしたいフォルダーを選択します。
         path = filedialog.askdirectory(title="出力先フォルダーを選択")
         if path:
             self.output_var.set(path)
