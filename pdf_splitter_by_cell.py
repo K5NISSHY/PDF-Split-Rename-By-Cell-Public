@@ -1,3 +1,5 @@
+"""PDFを1ページずつに分け、Excelのセル値を出力ファイル名にするツール。"""
+
 from __future__ import annotations
 
 import os
@@ -12,6 +14,7 @@ from openpyxl import load_workbook
 from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
 from pypdf import PdfReader, PdfWriter
 
+# Windowsのファイル名に使えない文字と、特別な予約名をまとめておきます。
 INVALID_FILENAME_CHARS = set('<>:"/\\|?*')
 WINDOWS_RESERVED_NAMES = {
     "CON", "PRN", "AUX", "NUL",
@@ -22,6 +25,7 @@ EXCEL_MAX_ROW = 1_048_576
 
 
 def parse_start_cell(cell_address: str) -> tuple[str, int]:
+    # A1形式の入力を確認し、処理で使いやすい「列」と「行」に分けます。
     address = cell_address.strip().upper()
     if not re.fullmatch(r"\$?[A-Z]{1,3}\$?[1-9][0-9]*", address):
         raise ValueError("開始セルを正しく入力してください（例: A1、B3）。")
@@ -35,6 +39,7 @@ def parse_start_cell(cell_address: str) -> tuple[str, int]:
 
 
 def validate_filename_base(name: str, cell_address: str) -> str:
+    # Excelの値をそのままファイル名にする前に、Windowsで使える名前か確認します。
     if any(ch in INVALID_FILENAME_CHARS for ch in name) or any(ord(ch) < 32 for ch in name):
         raise ValueError(
             f"セル {cell_address} の値「{name}」には、ファイル名に使えない文字（\\ / : * ? \" < > | など）が含まれています。"
@@ -59,6 +64,7 @@ def read_output_names(
     if last_row > EXCEL_MAX_ROW:
         raise ValueError(f"開始セルから{page_count}ページ分のセルを読み取ると、Excelの最終行を超えます。")
 
+    # 数式セルの式と、Excelに保存された計算結果を別々に読み取ります。
     formula_workbook = None
     value_workbook = None
     try:
@@ -68,6 +74,7 @@ def read_output_names(
         if sheet_name not in formula_workbook.sheetnames:
             raise ValueError(f'指定したシート「{sheet_name}」がExcelブックにありません。')
 
+        # PDFの各ページに対応するセルを、開始行から1行ずつ下へ読みます。
         formula_sheet = formula_workbook[sheet_name]
         value_sheet = value_workbook[sheet_name]
         names: list[str] = []
@@ -91,6 +98,7 @@ def read_output_names(
             name = validate_filename_base(str(value).strip(), address)
             names.append(f"{name}.pdf")
 
+        # Windowsでは大文字と小文字だけが違う名前も同じファイルとみなされます。
         seen: set[str] = set()
         duplicates: list[str] = []
         for filename in names:
@@ -106,6 +114,7 @@ def read_output_names(
     except Exception as exc:
         raise ValueError(f"Excelファイルを読み込めませんでした。\n{exc}") from exc
     finally:
+        # 読み取り専用で開いたExcelブックを必ず閉じます。
         if formula_workbook is not None:
             formula_workbook.close()
         if value_workbook is not None:
@@ -130,6 +139,7 @@ def split_pdf_by_cell(
     if not output_dir.is_dir():
         raise ValueError("出力先フォルダーが見つかりません。")
 
+    # 先にPDFを開き、ページ数を調べます。1ページにつき1つの出力を作ります。
     try:
         reader = PdfReader(str(pdf_path), strict=True)
         if reader.is_encrypted:
@@ -147,6 +157,7 @@ def split_pdf_by_cell(
     except Exception as exc:
         raise ValueError(f"PDFを読み込めませんでした。破損または未対応の可能性があります。\n{exc}") from exc
 
+    # PDFのページ数分、Excelから名前を読み取り、上書き対象がないか先に調べます。
     filenames = read_output_names(excel_path, sheet_name, start_cell, page_count)
     destinations = [output_dir / filename for filename in filenames]
     existing = [path.name for path in destinations if path.exists()]
@@ -155,9 +166,11 @@ def split_pdf_by_cell(
         extra = f"\nほか {len(existing) - 8} 件" if len(existing) > 8 else ""
         raise FileExistsError("同名の出力ファイルが既にあります。上書きは行いません。\n" + preview + extra)
 
+    # まず一時フォルダーへ全ページを書き出し、成功したら出力先へ移動します。
     created: list[Path] = []
     staging_dir = Path(tempfile.mkdtemp(prefix=".pdf_split_by_cell_", dir=output_dir))
     try:
+        # PDFのページとExcelから作ったファイル名を、順番に1つずつ組み合わせます。
         for page, filename in zip(reader.pages, filenames, strict=True):
             writer = PdfWriter()
             writer.add_page(page)
@@ -165,6 +178,7 @@ def split_pdf_by_cell(
             with staged.open("xb") as stream:
                 writer.write(stream)
 
+        # 一時フォルダーのPDFを出力先へ移します。
         for staged in sorted(staging_dir.glob("*.pdf")):
             destination = output_dir / staged.name
             os.rename(staged, destination)
@@ -183,7 +197,9 @@ def split_pdf_by_cell(
 
 
 class PdfSplitByCellApp:
+    # Tkinterで画面を作り、利用者が選んだファイルや設定を受け取ります。
     def __init__(self, root: tk.Tk) -> None:
+        # 入力欄、ファイル参照ボタン、実行ボタンを画面に並べます。
         self.root = root
         root.title("PDF 1ページ分割・セル別リネーム")
         root.resizable(False, False)
@@ -224,6 +240,7 @@ class PdfSplitByCellApp:
                 self.output_var.set(str(Path(path).parent))
 
     def choose_excel(self) -> None:
+        # Excelを選ぶと、シート名を読み込んで選択欄に表示します。
         path = filedialog.askopenfilename(title="Excelファイルを選択", filetypes=[("Excelブック", "*.xlsx *.xlsm")])
         if not path:
             return
@@ -250,6 +267,7 @@ class PdfSplitByCellApp:
             self.output_var.set(path)
 
     def run(self) -> None:
+        # 入力不足がないか確認してから、分割処理を呼び出します。
         if not all((self.pdf_var.get(), self.excel_var.get(), self.output_var.get(), self.sheet_var.get(), self.cell_var.get().strip())):
             messagebox.showwarning("入力が必要です", "PDF、Excel、シート、開始セル、出力先フォルダーをすべて指定してください。")
             return
@@ -265,6 +283,7 @@ class PdfSplitByCellApp:
 
 
 def main() -> None:
+    # 画面を作り、ボタン操作を待つイベントループを開始します。
     root = tk.Tk()
     PdfSplitByCellApp(root)
     root.mainloop()
